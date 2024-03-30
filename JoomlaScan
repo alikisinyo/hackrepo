@@ -1,0 +1,127 @@
+#!/usr/bin/python
+import sys
+import requests
+import argparse
+from bs4 import BeautifulSoup
+import threading
+import time
+
+dbarray = []
+url = ""
+useragentdesktop = {
+    "User-Agent": "Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; WOW64; Trident/6.0)",
+    "Accept-Language": "it"
+}
+timeoutconnection = 5
+pool = None
+swversion = "0.5beta"
+
+
+def hello():
+    print("-------------------------------------------")
+    print("      	     Joomla Scan                  ")
+    print("   Usage: python joomlascan.py <target>    ")
+    print("    Version " + swversion + " - Database Entries " + str(len(dbarray)))
+    print("         created by Andrea Draghetti        ")
+    print("         refined by Ali Abdalla        ")
+    print("-------------------------------------------")
+
+
+def load_component():
+    with open("comptotestdb.txt", "r") as f:
+        for line in f:
+            dbarray.append(line.strip())
+
+
+def check_url(url, path="/"):
+    fullurl = url + path
+    try:
+        conn = requests.get(fullurl, headers=useragentdesktop, timeout=timeoutconnection)
+        if conn.headers.get("content-length") != "0":
+            return conn.status_code
+        else:
+            return 404
+    except requests.exceptions.RequestException:
+        return None
+
+
+def check_readme(url, component):
+    if check_url(url, "/components/" + component + "/README.txt") == 200:
+        print("\t README file found \t > " + url + "/components/" + component + "/README.txt")
+
+    # Add other checks for README files here
+
+
+# Define other check functions (check_license, check_changelog, check_manifest, check_index, etc.)
+
+def main(argv):
+    load_component()
+    hello()
+
+    try:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("-u", "--url", action="store", dest="url", help="The Joomla URL/domain to scan.")
+        parser.add_argument("-t", "--threads", action="store", dest="threads",
+                            help="The number of threads to use when multi-threading requests (default: 10).")
+        parser.add_argument("-v", "--version", action="version", version="%(prog)s " + swversion)
+
+        arguments = parser.parse_args(argv)
+    except argparse.ArgumentError:
+        sys.exit(1)
+
+    if arguments.url:
+        global url
+        url = arguments.url
+        if not url.startswith("https://") and not url.startswith("http://"):
+            print("You must insert http:// or https:// protocol\n")
+            sys.exit(1)
+        if url.endswith("/"):
+            url = url[:-1]
+    else:
+        print("")
+        parser.print_help()
+        sys.exit(1)
+
+    concurrentthreads = 10
+    global pool
+    if arguments.threads and arguments.threads.isdigit():
+        concurrentthreads = int(arguments.threads)
+        pool = threading.BoundedSemaphore(concurrentthreads)
+    else:
+        pool = threading.BoundedSemaphore(concurrentthreads)
+
+    if check_url(url) != 404:
+        # Start scanning components
+        print("\nStart scan...with %d concurrent threads!" % concurrentthreads)
+
+        for component in dbarray:
+            pool.acquire(blocking=True)
+            t = threading.Thread(target=scanner, args=(url, component,))
+            t.start()
+
+        while threading.active_count() > 1:
+            time.sleep(0.1)
+
+        print("End Scanner")
+    else:
+        print("Site Down, check URL please...")
+
+
+def scanner(url, component):
+    if check_url(url, "/index.php?option=" + component) == 200:
+        print("Component found: " + component + "\t > " + url + "/index.php?option=" + component)
+        check_readme(url, component)
+        # Call other check functions here
+    elif check_url(url, "/components/" + component + "/") == 200:
+        print("Component found: " + component + "\t > " + url + "/components/" + component + "/")
+        check_readme(url, component)
+        # Call other check functions here
+    elif check_url(url, "/administrator/components/" + component + "/") == 200:
+        print("Component found: " + component + "\t > " + url + "/administrator/components/" + component + "/")
+        check_readme(url, component)
+        # Call other check functions here
+    pool.release()
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
